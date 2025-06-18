@@ -404,3 +404,112 @@
     (ok world-id)
   )
 )
+
+;; LEADERBOARD MANAGEMENT
+
+(define-public (update-player-score
+    (player principal)
+    (new-score uint)
+  )
+  (let ((current-stats (unwrap! (map-get? leaderboard { player: player }) ERR-PLAYER-NOT-FOUND)))
+    (asserts! (is-protocol-admin tx-sender) ERR-NOT-AUTHORIZED)
+    (asserts! (is-valid-principal player) ERR-INVALID-INPUT)
+    (asserts! (and (>= new-score u0) (<= new-score u10000)) ERR-INVALID-SCORE)
+    (map-set leaderboard { player: player }
+      (merge current-stats {
+        score: new-score,
+        games-played: (+ (get games-played current-stats) u1),
+      })
+    )
+    (ok true)
+  )
+)
+
+;; REWARD DISTRIBUTION
+
+(define-public (distribute-bitcoin-rewards)
+  (let ((top-players (get-top-players)))
+    (asserts! (is-protocol-admin tx-sender) ERR-NOT-AUTHORIZED)
+    (try! (fold distribute-reward (filter is-valid-reward-candidate top-players)
+      (ok true)
+    ))
+    (ok true)
+  )
+)
+
+(define-private (is-valid-reward-candidate (player principal))
+  (match (map-get? leaderboard { player: player })
+    stats (and
+      (> (get score stats) u0)
+      (is-valid-principal player)
+    )
+    false
+  )
+)
+
+(define-private (distribute-reward
+    (player principal)
+    (previous-result (response bool uint))
+  )
+  (match (map-get? leaderboard { player: player })
+    player-stats (let ((reward-amount (calculate-reward (get score player-stats))))
+      (if (and (is-ok previous-result) (> reward-amount u0))
+        (begin
+          (map-set leaderboard { player: player }
+            (merge player-stats { total-rewards: (+ (get total-rewards player-stats) reward-amount) })
+          )
+          (ok true)
+        )
+        previous-result
+      )
+    )
+    previous-result
+  )
+)
+
+(define-private (calculate-reward (score uint))
+  (if (and (> score u100) (<= score u10000))
+    (* score u10)
+    u0
+  )
+)
+
+;; EXPERIENCE CALCULATION HELPERS
+
+(define-private (calculate-level-up-experience (current-level uint))
+  (* BASE-EXPERIENCE-REQUIRED current-level)
+)
+
+(define-private (validate-experience-gain
+    (current-experience uint)
+    (gained-experience uint)
+    (current-level uint)
+  )
+  (let (
+      (max-allowed-gain (calculate-level-up-experience current-level))
+      (new-total-experience (+ current-experience gained-experience))
+    )
+    (and
+      (<= gained-experience max-allowed-gain)
+      (<= new-total-experience (* MAX-EXPERIENCE-PER-LEVEL current-level))
+    )
+  )
+)
+
+(define-private (can-level-up
+    (current-experience uint)
+    (gained-experience uint)
+    (current-level uint)
+  )
+  (let (
+      (new-total-experience (+ current-experience gained-experience))
+      (required-experience (calculate-level-up-experience current-level))
+    )
+    (>= new-total-experience required-experience)
+  )
+)
+
+;; PROTOCOL INITIALIZATION
+
+;; Initialize the deployer as the first protocol admin
+(map-set protocol-admin-whitelist tx-sender true)
