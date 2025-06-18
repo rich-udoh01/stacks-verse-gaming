@@ -203,3 +203,104 @@
 (define-read-only (get-world-details (world-id uint))
   (map-get? game-worlds { world-id: world-id })
 )
+
+(define-read-only (get-avatar-details (avatar-id uint))
+  (map-get? avatar-metadata { avatar-id: avatar-id })
+)
+
+(define-read-only (get-top-players)
+  (let ((max-entries (var-get max-leaderboard-entries)))
+    (list tx-sender)
+  )
+)
+
+;; EXPERIENCE SYSTEM
+
+(define-read-only (get-next-level-requirement (avatar-id uint))
+  (match (get-avatar-details avatar-id)
+    metadata (ok (calculate-level-up-experience (get level metadata)))
+    ERR-INVALID-AVATAR
+  )
+)
+
+(define-read-only (can-receive-experience
+    (avatar-id uint)
+    (experience-amount uint)
+  )
+  (match (get-avatar-details avatar-id)
+    metadata (ok (and
+      (< (get level metadata) MAX-LEVEL)
+      (validate-experience-gain (get experience metadata) experience-amount
+        (get level metadata)
+      )
+    ))
+    ERR-INVALID-AVATAR
+  )
+)
+
+;; PROTOCOL MANAGEMENT
+
+(define-public (initialize-protocol
+    (entry-fee uint)
+    (max-entries uint)
+  )
+  (begin
+    (asserts! (is-protocol-admin tx-sender) ERR-NOT-AUTHORIZED)
+    (asserts! (and (>= entry-fee u1) (<= entry-fee u1000)) ERR-INVALID-FEE)
+    (asserts! (and (>= max-entries u1) (<= max-entries u500)) ERR-INVALID-ENTRIES)
+    (var-set protocol-fee entry-fee)
+    (var-set max-leaderboard-entries max-entries)
+    (ok true)
+  )
+)
+
+;; ASSET MANAGEMENT
+
+(define-public (mint-stacksverse-asset
+    (name (string-ascii 50))
+    (description (string-ascii 200))
+    (rarity (string-ascii 20))
+    (power-level uint)
+    (world-id uint)
+    (attributes (list 10 (string-ascii 20)))
+  )
+  (let ((token-id (+ (var-get total-assets) u1)))
+    (asserts! (is-protocol-admin tx-sender) ERR-NOT-AUTHORIZED)
+    (asserts! (is-valid-name name) ERR-INVALID-NAME)
+    (asserts! (is-valid-description description) ERR-INVALID-DESCRIPTION)
+    (asserts! (is-valid-rarity rarity) ERR-INVALID-RARITY)
+    (asserts! (is-valid-power-level power-level) ERR-INVALID-POWER-LEVEL)
+    (asserts! (is-some (get-world-details world-id)) ERR-WORLD-NOT-FOUND)
+    (asserts! (is-valid-attributes attributes) ERR-INVALID-ATTRIBUTES)
+    (try! (nft-mint? stacksverse-asset token-id tx-sender))
+    (map-set stacksverse-asset-metadata { token-id: token-id } {
+      name: name,
+      description: description,
+      rarity: rarity,
+      power-level: power-level,
+      world-id: world-id,
+      attributes: attributes,
+      experience: u0,
+      level: u1,
+    })
+    (var-set total-assets token-id)
+    (ok token-id)
+  )
+)
+
+(define-public (transfer-game-asset
+    (token-id uint)
+    (recipient principal)
+  )
+  (begin
+    (asserts!
+      (is-eq tx-sender
+        (unwrap! (nft-get-owner? stacksverse-asset token-id)
+          ERR-INVALID-GAME-ASSET
+        ))
+      ERR-NOT-AUTHORIZED
+    )
+    (asserts! (is-valid-principal recipient) ERR-INVALID-INPUT)
+    (nft-transfer? stacksverse-asset token-id tx-sender recipient)
+  )
+)
