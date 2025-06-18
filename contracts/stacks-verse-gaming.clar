@@ -97,3 +97,109 @@
     world-access: (list 10 uint),
   }
 )
+
+;; Virtual Worlds Registry
+(define-map game-worlds
+  { world-id: uint }
+  {
+    name: (string-ascii 50),
+    description: (string-ascii 200),
+    entry-requirement: uint,
+    active-players: uint,
+    total-rewards: uint,
+  }
+)
+
+;; Competitive Leaderboard
+(define-map leaderboard
+  { player: principal }
+  {
+    score: uint,
+    games-played: uint,
+    total-rewards: uint,
+    avatar-id: uint,
+    rank: uint,
+    achievements: (list 20 (string-ascii 50)),
+  }
+)
+
+;; VALIDATION FUNCTIONS
+
+(define-private (is-valid-name (name (string-ascii 50)))
+  (and
+    (>= (len name) u1)
+    (<= (len name) u50)
+    (not (is-eq name ""))
+  )
+)
+
+(define-private (is-valid-description (description (string-ascii 200)))
+  (and
+    (>= (len description) u1)
+    (<= (len description) u200)
+    (not (is-eq description ""))
+  )
+)
+
+(define-private (is-valid-rarity (rarity (string-ascii 20)))
+  (or
+    (is-eq rarity "common")
+    (is-eq rarity "uncommon")
+    (is-eq rarity "rare")
+    (is-eq rarity "epic")
+    (is-eq rarity "legendary")
+  )
+)
+
+(define-private (is-valid-power-level (power uint))
+  (and (>= power u1) (<= power u1000))
+)
+
+(define-private (is-valid-attributes (attributes (list 10 (string-ascii 20))))
+  (and
+    (>= (len attributes) u1)
+    (<= (len attributes) u10)
+  )
+)
+
+(define-private (is-valid-world-access (worlds (list 10 uint)))
+  (and
+    (>= (len worlds) u1)
+    (<= (len worlds) u10)
+    (fold check-world-exists worlds true)
+  )
+)
+
+(define-private (check-world-exists
+    (world-id uint)
+    (valid bool)
+  )
+  (and valid (is-some (get-world-details world-id)))
+)
+
+;; UTILITY FUNCTIONS
+
+(define-read-only (is-protocol-admin (sender principal))
+  (default-to false (map-get? protocol-admin-whitelist sender))
+)
+
+(define-read-only (is-valid-principal (input principal))
+  (and
+    (not (is-eq input tx-sender))
+    (not (is-eq input (as-contract tx-sender)))
+  )
+)
+
+(define-read-only (is-safe-principal (input principal))
+  (and
+    (is-valid-principal input)
+    (or
+      (is-protocol-admin input)
+      (is-some (map-get? leaderboard { player: input }))
+    )
+  )
+)
+
+(define-read-only (get-world-details (world-id uint))
+  (map-get? game-worlds { world-id: world-id })
+)
